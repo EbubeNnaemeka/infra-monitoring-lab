@@ -111,6 +111,15 @@ def ensure_host(zbx, host):
         print(f"Created host {host['name']}")
 
 
+def disable_builtin_server_host(zbx):
+    # The image ships a "Zabbix server" host that polls an agent on 127.0.0.1
+    # inside the server container. There is none, so it alerts forever.
+    found = zbx.call("host.get", {"filter": {"host": ["Zabbix server"]}, "output": ["hostid", "status"]})
+    if found and found[0]["status"] == "0":
+        zbx.call("host.update", {"hostid": found[0]["hostid"], "status": 1})
+        print("Disabled built-in 'Zabbix server' host (no local agent in this stack)")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://127.0.0.1:8081")
@@ -124,6 +133,7 @@ def main():
 
     zbx = Zabbix(args.url)
     ensure_admin_password(zbx, new_password)
+    disable_builtin_server_host(zbx)
 
     hosts = json.loads(pathlib.Path(args.hosts).read_text())
     for host in hosts:

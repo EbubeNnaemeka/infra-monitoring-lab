@@ -1,5 +1,9 @@
 # Infrastructure Monitoring Lab
 
+[![integration](https://github.com/EbubeNnaemeka/infra-monitoring-lab/actions/workflows/integration.yml/badge.svg)](https://github.com/EbubeNnaemeka/infra-monitoring-lab/actions/workflows/integration.yml)
+
+**Status:** Running and tested. CI starts the full stack on every push, configures it through the API, and checks that the agent reports data. Windows hosts pending the AD lab.
+
 A Zabbix 7.0 LTS monitoring stack, configured through the Zabbix API rather than by hand, and built to watch the [Active Directory lab](https://github.com/EbubeNnaemeka/active-directory-lab) VMs: uptime, resource thresholds, and agent availability.
 
 ## Architecture
@@ -52,6 +56,18 @@ The first attempt at this test gave a false result: my check matched *any* open 
 
 **Zabbix server crash-loops with `its "users" table is empty`.** The real cause is earlier in the log: `ERROR 1419 ... binary logging is enabled`. MySQL 8.x turns binary logging on by default, which blocks Zabbix's schema import from creating triggers, leaving a half-built database. Fix: start MySQL with `--log-bin-trust-function-creators=1` (already in `docker-compose.yml`), then `docker compose down -v` to discard the broken schema and start fresh.
 
+**Built-in "Zabbix server" host alerts "agent is not available" forever.** The official image registers the server itself as a host with an agent at `127.0.0.1`, but no agent runs inside the server container. `configure_zabbix.py` disables that host so it doesn't bury real alerts. (Spotted while reviewing the screenshots below.)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Monitored hosts](screenshots/01-monitored-hosts.png) | ![Latest data](screenshots/02-latest-data.png) |
+| Monitored hosts | Live metrics from the agent |
+
+![Outage test in problem history](screenshots/03-outage-test-problem-history.png)
+*Problem history from the agent outage test: raised at 18:12:20, resolved 18:14:20.*
+
 ## Resume bullet (use once you have completed and verified the lab)
 
 > Deployed Zabbix 7.0 LTS with API-driven host provisioning; validated availability alerting with a controlled agent outage (alert in ~3 min, auto-recovery in under 2 min) and diagnosed a MySQL 8 binary-logging issue that broke schema initialization.
@@ -60,9 +76,15 @@ The first attempt at this test gave a false result: my check matched *any* open 
 
 ```
 ├── README.md
+├── .github/workflows/integration.yml
 ├── docker-compose.yml
 ├── .env.example
 ├── hosts.json
+├── screenshots/
 └── scripts/
     └── configure_zabbix.py
 ```
+
+---
+
+Part of my homelab portfolio: **[ebube-nnaemeka.pages.dev](https://ebube-nnaemeka.pages.dev)** · [All projects](https://github.com/EbubeNnaemeka)

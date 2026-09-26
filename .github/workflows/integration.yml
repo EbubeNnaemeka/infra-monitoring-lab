@@ -1,0 +1,65 @@
+name: integration
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  zabbix-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create throwaway credentials
+        run: |
+          {
+            echo "MYSQL_USER=zabbix"
+            echo "MYSQL_PASSWORD=$(openssl rand -hex 16)"
+            echo "MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)"
+            echo "ZBX_ADMIN_PASSWORD=$(openssl rand -hex 16)"
+          } > .env
+
+      - name: Start stack
+        run: docker compose up -d
+
+      - name: Wait for Zabbix API and server
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf -X POST -H 'Content-Type: application/json-rpc' \
+                 -d '{"jsonrpc":"2.0","method":"apiinfo.version","params":{},"id":1}' \
+                 http://127.0.0.1:8081/api_jsonrpc.php | grep -q result \
+               && docker compose ps zabbix-server --format '{{.Status}}' | grep -q '^Up'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose logs zabbix-server | tail -40
+          exit 1
+
+      - name: Configure via API (run twice to prove idempotency)
+        run: |
+          python3 scripts/configure_zabbix.py
+          python3 scripts/configure_zabbix.py
+
+      - name: Assert agent is monitored and reporting
+        run: |
+          python3 - <<'EOF'
+          import sys, time
+          sys.path.insert(0, "scripts")
+          from configure_zabbix import Zabbix, load_env, ROOT
+          z = Zabbix("http://127.0.0.1:8081")
+          z.login(load_env(ROOT / ".env")["ZBX_ADMIN_PASSWORD"])
+          for _ in range(40):
+              h = z.call("host.get", {"filter": {"host": ["lab-linux-agent"]}, "output": ["hostid"],
+                                      "selectInterfaces": ["available"]})
+              assert len(h) == 1, f"expected exactly 1 host, got {len(h)}"
+              ping = z.call("item.get", {"hostids": h[0]["hostid"], "filter": {"key_": ["agent.ping"]},
+                                         "output": ["lastvalue", "lastclock"]})
+              if ping and ping[0]["lastclock"] != "0" and ping[0]["lastvalue"] == "1":
+                  print("agent reachable, agent.ping = 1")
+                  sys.exit(0)
+              time.sleep(10)
+          sys.exit("agent never reported data")
+          EOF
