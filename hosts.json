@@ -1,0 +1,29 @@
+[
+  {
+    "name": "lab-linux-agent",
+    "address": "zabbix-agent",
+    "group": "Lab/Linux",
+    "templates": ["Linux by Zabbix agent"]
+  },
+  {
+    "name": "DC01",
+    "address": "10.10.10.10",
+    "group": "Lab/Domain Controllers",
+    "templates": ["Windows by Zabbix agent"],
+    "enabled": false
+  },
+  {
+    "name": "DC02",
+    "address": "10.10.10.11",
+    "group": "Lab/Domain Controllers",
+    "templates": ["Windows by Zabbix agent"],
+    "enabled": false
+  },
+  {
+    "name": "WIN11-CLIENT",
+    "address": "10.10.10.50",
+    "group": "Lab/Workstations",
+    "templates": ["Windows by Zabbix agent"],
+    "enabled": false
+  }
+]

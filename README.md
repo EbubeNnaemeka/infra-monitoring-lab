@@ -1,47 +1,68 @@
 # Infrastructure Monitoring Lab
 
-A Zabbix monitoring deployment watching the [Active Directory lab](https://github.com/EbubeNnaemeka/active-directory-lab) VMs — the kind of operational visibility a NOC/sysadmin role expects on day one: uptime, resource thresholds, and service-level alerting.
+A Zabbix 7.0 LTS monitoring stack, configured through the Zabbix API rather than by hand, and built to watch the [Active Directory lab](https://github.com/EbubeNnaemeka/active-directory-lab) VMs: uptime, resource thresholds, and agent availability.
 
 ## Architecture
 
 ```mermaid
 graph TD
-    Z["Zabbix Server<br/>2 vCPU, 2GB RAM"] -->|polls agents| DC1[DC01]
-    Z -->|polls agents| DC2[DC02]
-    Z -->|polls agents| CLIENT[WIN11-CLIENT]
-    Z --> ALERT["Alert: Email/Webhook on threshold breach"]
+    Z["Zabbix Server 7.0 LTS<br/>+ MySQL 8.4 + web UI"] -->|polls| A["lab-linux-agent<br/>(container, live today)"]
+    Z -.->|polls, once the AD lab exists| DC1[DC01]
+    Z -.-> DC2[DC02]
+    Z -.-> CLIENT[WIN11-CLIENT]
 ```
 
 ## Setup
 
-1. Deploy Zabbix via the official Docker container (fastest path — skips manual MySQL/PostgreSQL setup):
-   ```bash
-   docker compose up -d
-   ```
-2. Install the Zabbix agent on each lab VM (DC01, DC02, WIN11-CLIENT), pointed at the Zabbix server's IP.
-3. Open firewall ports **10050/tcp** (agent) and **10051/tcp** (server→agent active checks) between the monitoring host and each target.
-4. Add each host in the Zabbix web UI (`http://localhost:8080`) using the built-in **Windows/Linux** templates for baseline CPU/disk/memory/service checks.
+```bash
+cp .env.example .env          # then replace every change-me value
+docker compose up -d
+python3 scripts/configure_zabbix.py
+```
 
-## Triggers configured
+- Web UI: http://127.0.0.1:8081 (bound to localhost only). Log in as `Admin` with `ZBX_ADMIN_PASSWORD` from `.env`.
+- `configure_zabbix.py` rotates the default `Admin/zabbix` password, creates host groups, and registers every host in [`hosts.json`](hosts.json) with its template. It's idempotent: running it again updates rather than duplicates.
+- The Windows hosts in `hosts.json` are `"enabled": false` until the AD lab VMs exist. Flip them to `true`, install the Zabbix agent on each VM, and re-run the script.
 
-| Trigger | Condition | Severity |
-|---|---|---|
-| DC service down | AD DS / DNS / DHCP service not running on DC01 or DC02 | Disaster |
-| Disk space low | Free disk space < 15% on any monitored host | High |
-| High CPU sustained | CPU utilization > 90% for 5+ minutes | Warning |
-| Host unreachable | Agent fails to respond to 3 consecutive polls | High |
+## Alerting
 
-Full trigger expressions and configuration exported to [`zabbix-templates/lab-triggers.yaml`](zabbix-templates/lab-triggers.yaml).
+Hosts use Zabbix's built-in templates (`Linux by Zabbix agent`, `Windows by Zabbix agent`), which ship with the triggers this lab relies on:
+
+| Condition | Built-in trigger |
+|---|---|
+| Host unreachable | Zabbix agent is not available (for 3m) |
+| High CPU sustained | High CPU utilization |
+| Disk space low | Disk space is low / critically low |
+| Recent reboot | Host has been restarted (uptime < 10m) |
+
+## Test results
+
+**2026-09-26 — agent outage test (lab-linux-agent)**
+
+| Step | Result |
+|---|---|
+| Stopped the agent container | 18:09:13 |
+| "Zabbix agent is not available (for 3m)" raised (severity: Average) | after **195s** — the 3-minute threshold plus one polling cycle |
+| Restarted the agent | 18:12:29 |
+| Problem auto-resolved | **113s** after restart |
+
+The first attempt at this test gave a false result: my check matched *any* open problem and picked up the unrelated "host has been restarted" alert that was already open from the container starting. Filtering on the specific trigger name fixed it — a good reminder to check *which* alert fired, not just that one did.
+
+## Troubleshooting notes
+
+**Zabbix server crash-loops with `its "users" table is empty`.** The real cause is earlier in the log: `ERROR 1419 ... binary logging is enabled`. MySQL 8.x turns binary logging on by default, which blocks Zabbix's schema import from creating triggers, leaving a half-built database. Fix: start MySQL with `--log-bin-trust-function-creators=1` (already in `docker-compose.yml`), then `docker compose down -v` to discard the broken schema and start fresh.
 
 ## Resume bullet (use once you have completed and verified the lab)
 
-> Deployed Zabbix monitoring across a multi-server domain environment; configured service-availability and resource-threshold alerting for domain controllers and client endpoints.
+> Deployed Zabbix 7.0 LTS with API-driven host provisioning; validated availability alerting with a controlled agent outage (alert in ~3 min, auto-recovery in under 2 min) and diagnosed a MySQL 8 binary-logging issue that broke schema initialization.
 
 ## Repo contents
 
 ```
 ├── README.md
 ├── docker-compose.yml
-└── zabbix-templates/
-    └── lab-triggers.yaml
+├── .env.example
+├── hosts.json
+└── scripts/
+    └── configure_zabbix.py
 ```
